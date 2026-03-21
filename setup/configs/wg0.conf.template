@@ -1,0 +1,10 @@
+[Interface]
+# Generate keys: wg genkey | tee privatekey | wg pubkey > publickey
+PrivateKey = YOUR_PRIVATE_KEY_HERE
+Address = 10.7.0.2/24
+
+[Peer]
+PublicKey = YOUR_SERVER_PUBLIC_KEY_HERE
+Endpoint = YOUR_SERVER_IP:51820
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25

@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+*.swp
+*.swo
+/data/
+*.log
+.env
+build/
+node_modules/
+typescript
+web/proxy_test_run.sh

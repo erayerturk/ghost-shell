@@ -1,0 +1,15 @@
+#!/bin/sh /etc/rc.common
+START=99
+
+start() {
+    cd /opt/shadowplug/web
+    python3 app.py >> /var/log/shadowplug.log 2>&1 &
+    /usr/bin/usb-watchdog >> /var/log/shadowplug.log 2>&1 &
+    logger "shadowplug: web UI + USB watchdog started"
+}
+
+stop() {
+    killall -9 python3 2>/dev/null
+    killall usb-watchdog 2>/dev/null
+    logger "shadowplug: stopped"
+}

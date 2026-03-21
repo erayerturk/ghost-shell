@@ -1,0 +1,13 @@
+#!/bin/sh
+# ShadowPlug: Remove usb0 IP to prevent route conflict with usb1
+# usb0 = RNDIS (Windows), usb1 = ECM (Mac)
+# Only remove usb0 IP if usb1 (Mac) has active carrier to avoid breaking Windows
+if [ "$INTERFACE" = "usb0" ] && [ "$ACTION" = "add" ]; then
+    sleep 2
+    USB1_CARRIER=$(cat /sys/class/net/usb1/carrier 2>/dev/null || echo "0")
+    if [ "$USB1_CARRIER" = "1" ]; then
+        ip addr del 192.168.7.1/24 dev usb0 2>/dev/null
+        ip route del 192.168.7.0/24 dev usb0 2>/dev/null
+        logger "shadowplug: usb0 IP removed (usb1/Mac active)"
+    fi
+fi

@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>shadowplug</title>
+    <link rel="icon" type="image/png" href="favicon.png">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app">
+        <header class="header">
+            <h1><img src="favicon.png" width="24" height="24" alt="" style="vertical-align:middle;margin-right:6px">shadowplug</h1>
+            <span id="vpnBadge" class="badge off">checking</span>
+        </header>
+
+        <div class="stats">
+            <div class="stat"><div class="stat-label">IP</div><div class="stat-val" id="publicIp">—</div></div>
+            <div class="stat"><div class="stat-label">USB</div><div class="stat-val" id="usbStatus">—</div></div>
+            <div class="stat"><div class="stat-label">Down</div><div class="stat-val" id="vpnTx">—</div></div>
+            <div class="stat"><div class="stat-label">Up</div><div class="stat-val" id="vpnRx">—</div></div>
+        </div>
+
+        <div class="tabs">
+            <button class="tab active" data-tab="vpn">VPN</button>
+            <button class="tab" data-tab="blocking">Blocking</button>
+            <button class="tab" data-tab="network">Network</button>
+            <button class="tab" data-tab="privacy">Privacy</button>
+            <button class="tab" data-tab="proxy">Proxy</button>
+            <button class="tab" data-tab="dns">DNS</button>
+            <button class="tab" data-tab="system">System</button>
+            <button class="tab" data-tab="logs">Logs</button>
+        </div>
+
+        <!-- VPN -->
+        <div class="panel active" id="panel-vpn">
+            <!-- ShadowPlug Built-in VPN (Shown if licensed) -->
+            <div class="card" id="defaultVpnCard" style="display:none; border:1px solid #0096ff">
+                <div class="card-title">ShadowPlug Built-in VPN 🛡️</div>
+                <div style="margin:10px 0;padding:10px;background:rgba(255,152,0,0.08);border:1px solid rgba(255,152,0,0.15);border-radius:6px;font-size:12px;color:#ccc;line-height:1.6">
+                    <strong style="color:#ff9800">&#9888; Legal & Usage Notice</strong><br>
+                    This is a complimentary <strong>5 Mbps VPN</strong> provided for demo purposes only with your license.<br>
+                    You are legally responsible for any abuse or illegal activities conducted through this connection.
+                </div>
+                <div class="row">
+                    <div><div class="stat-label">Server</div><div class="stat-val" id="defaultVpnServer" style="font-size:13px">—</div></div>
+                    <div><div class="stat-label">Status</div><div class="stat-val" id="defaultVpnStatus" style="font-size:13px">Disconnected</div></div>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" id="btnActivateDefaultVpn" style="width:100%" onclick="activateDefaultVPN()">Activate Built-in VPN</button>
+                    <button class="btn" id="btnDeactivateDefaultVpn" style="width:100%; display:none" onclick="deactivateDefaultVPN()">Disconnect Default VPN</button>
+                </div>
+            </div>
+
+            <!-- Custom VPN -->
+            <div class="card" id="customVpnCard">
+                <div class="card-title">Custom VPN (WireGuard)</div>
+                <div style="margin:10px 0;padding:10px;background:rgba(0,150,255,0.08);border:1px solid rgba(0,150,255,0.15);border-radius:6px;font-size:12px;color:#ccc;line-height:1.6">
+                    <strong style="color:#0096ff">&#8505; Routing Priority Note</strong><br>
+                    If both <b>Proxy</b> and <b>VPN</b> are connected, the <b>Proxy</b> takes highest priority for all TCP web traffic.<br>
+                    If you disable the Proxy, traffic will automatically fall back to the active VPN connection.
+                </div>
+                <div class="row">
+                    <div><label>Endpoint</label><input type="text" id="vpnEndpoint" placeholder="1.2.3.4"></div>
+                    <div><label>Port</label><input type="text" id="vpnPort" value="51820"></div>
+                </div>
+                <label>Private Key</label>
+                <input type="password" id="vpnPrivateKey" placeholder="Private key">
+                <label>Server Public Key</label>
+                <input type="text" id="vpnPeerPublicKey" placeholder="Public key">
+                <div class="row">
+                    <div><label>Address</label><input type="text" id="vpnAddress" placeholder="10.7.0.2/24"></div>
+                    <div><label>Allowed IPs</label><input type="text" id="vpnAllowedIPs" value="0.0.0.0/0"></div>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="saveVPN()">Save</button>
+                    <button class="btn" onclick="testVPN()">Test</button>
+                    <button class="btn" onclick="generateKeys()">Generate Keys</button>
+                </div>
+                <div class="toggle-row" style="margin-top:12px">
+                    <div class="toggle-text">VPN Connection<small id="vpnToggleLabel">Disconnected</small></div>
+                    <label class="switch"><input type="checkbox" id="vpnToggle" onchange="toggleVPN()"><span class="slider"></span></label>
+                </div>
+            </div>
+            <div class="card" id="keyResult" style="display:none">
+                <div class="card-title">Generated Keys</div>
+                <label>Private Key</label><input type="text" id="genPrivateKey" readonly>
+                <label>Public Key</label><input type="text" id="genPublicKey" readonly>
+                <button class="btn" onclick="useGeneratedKey()">Use This Key</button>
+            </div>
+            <div class="card" id="testResult" style="display:none">
+                <div class="card-title">Test Result</div>
+                <div id="testContent"></div>
+            </div>
+            <!-- Profiles -->
+            <div class="card">
+                <div class="card-title">Profiles</div>
+                <label>Profile Name</label>
+                <input type="text" id="profileName" placeholder="e.g. Hetzner DE">
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="saveProfile()">Save Profile</button>
+                </div>
+                <div id="profileList" style="margin-top:10px"></div>
+            </div>
+        </div>
+
+        <!-- Blocking -->
+        <div class="panel" id="panel-blocking">
+            <div class="card">
+                <div class="card-title">Ad & Tracker Blocking</div>
+                <p class="hint">DNS-level blocking. Blocks ads, trackers, and malware domains.</p>
+                <div class="toggle-row">
+                    <div class="toggle-text">Enable Blocking<small id="blockCount">0 domains blocked</small></div>
+                    <label class="switch"><input type="checkbox" id="blockingEnabled" onchange="toggleBlocking()"><span class="slider"></span></label>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-title">Block Lists</div>
+                <p class="hint">StevenBlack hosts + AdAway + Malware filter — downloaded and merged when enabled.</p>
+            </div>
+            <div class="card">
+                <div class="card-title">Custom Blocked Domains</div>
+                <div class="row">
+                    <div><input type="text" id="customBlockDomain" placeholder="example.com" style="margin-bottom:0"></div>
+                    <div><button class="btn btn-primary" onclick="addBlockDomain()" style="width:100%">Block</button></div>
+                </div>
+                <div id="customBlockList" style="margin-top:10px"></div>
+            </div>
+        </div>
+
+        <!-- Network -->
+        <div class="panel" id="panel-network">
+            <div class="card">
+                <div class="card-title">WiFi Connection</div>
+                <div class="stats" style="margin-bottom:10px">
+                    <div class="stat"><div class="stat-label">Network</div><div class="stat-val" id="wifiSSID" style="font-size:13px">—</div></div>
+                    <div class="stat"><div class="stat-label">Status</div><div class="stat-val" id="wifiStatus" style="font-size:13px">—</div></div>
+                    <div class="stat"><div class="stat-label">Signal</div><div class="stat-val" id="wifiSignal" style="font-size:13px">—</div></div>
+                    <div class="stat"><div class="stat-label">Internet</div><div class="stat-val" id="wifiInternet" style="font-size:13px">—</div></div>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="scanWiFi()">Scan Networks</button>
+                    <button class="btn btn-danger" onclick="disconnectWiFi()">Disconnect</button>
+                </div>
+                <div id="wifiScanResults" style="margin-top:10px"></div>
+            </div>
+            <div class="card">
+                <div class="card-title">Connect to Network</div>
+                <div class="row">
+                    <div><label>SSID</label><input type="text" id="wifiSSIDInput" placeholder="Network name"></div>
+                    <div><label>Password</label><input type="password" id="wifiPassword" placeholder="Password"></div>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="connectWiFi()">Connect & Save</button>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-title">Saved Networks</div>
+                <p class="hint">Auto-connects to the strongest known network when Pi boots or WiFi drops.</p>
+                <div class="toggle-row">
+                    <div class="toggle-text">Auto-Connect<small>Reconnect to known networks automatically</small></div>
+                    <label class="switch"><input type="checkbox" id="wifiAutoConnect" onchange="toggleWiFiAuto()"><span class="slider"></span></label>
+                </div>
+                <div id="wifiProfileList" style="margin-top:10px"></div>
+            </div>
+            <div class="card">
+                <div class="card-title">WiFi MAC Address</div>
+                <p class="hint">Visible to routers and access points. Randomize to prevent tracking across networks.</p>
+                <div class="row">
+                    <div><div class="stat-label">Interface</div><div class="stat-val" id="macIface" style="font-size:13px">—</div></div>
+                    <div><div class="stat-label">Current MAC</div><div class="stat-val" id="macWifi" style="font-size:13px">—</div></div>
+                </div>
+                <div class="btn-group">
+                    <button class="btn" onclick="randomizeMAC()">Randomize WiFi MAC</button>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-title">Bandwidth</div>
+                <div id="bandwidthInfo"></div>
+                <div class="btn-group">
+                    <button class="btn" onclick="measureSpeed()">Measure Speed</button>
+                </div>
+                <div id="speedResult" style="margin-top:10px"></div>
+            </div>
+            <div class="card">
+                <div class="card-title">Split Tunneling</div>
+                <p class="hint">Route specific IPs/CIDRs outside the VPN tunnel.</p>
+                <div class="row">
+                    <div><input type="text" id="splitEntry" placeholder="8.8.8.8 or 192.168.0.0/16" style="margin-bottom:0"></div>
+                    <div><button class="btn btn-primary" onclick="addSplit()" style="width:100%">Add</button></div>
+                </div>
+                <div id="splitList" style="margin-top:10px"></div>
+            </div>
+            <div class="card">
+                <div class="card-title">Firewall Rules</div>
+                <p class="hint">Block or allow specific ports.</p>
+                <div class="row">
+                    <div><label>Protocol</label><select id="fwProto"><option value="tcp">TCP</option><option value="udp">UDP</option></select></div>
+                    <div><label>Port</label><input type="text" id="fwPort" placeholder="443" style="margin-bottom:0"></div>
+                </div>
+                <div class="row" style="margin-top:6px">
+                    <div><label>Direction</label><select id="fwDir"><option value="out">Outbound</option><option value="in">Inbound</option></select></div>
+                    <div><label>Action</label><select id="fwAction"><option value="DROP">Block</option><option value="ACCEPT">Allow</option></select></div>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="addFirewallRule()">Add Rule</button>
+                </div>
+                <div id="fwRuleList" style="margin-top:10px"></div>
+            </div>
+        </div>
+
+        <!-- Privacy -->
+        <div class="panel" id="panel-privacy">
+            <div class="card">
+                <div class="card-title">Leak Protection</div>
+                <div class="toggle-row">
+                    <div class="toggle-text">DNS Leak Protection<small>Force DNS through VPN</small></div>
+                    <label class="switch"><input type="checkbox" id="dnsLeakProtection" onchange="savePrivacy()"><span class="slider"></span></label>
+                </div>
+                <div class="toggle-row">
+                    <div class="toggle-text">WebRTC Blocking<small>Block STUN/TURN servers</small></div>
+                    <label class="switch"><input type="checkbox" id="webrtcLeakProtection" onchange="savePrivacy()"><span class="slider"></span></label>
+                </div>
+                <div class="toggle-row">
+                    <div class="toggle-text">Kill Switch<small>Block traffic if VPN drops</small></div>
+                    <label class="switch"><input type="checkbox" id="killSwitch" onchange="savePrivacy()"><span class="slider"></span></label>
+                </div>
+            </div>
+        </div>
+
+        <!-- DNS -->
+        <div class="panel" id="panel-dns">
+            <div class="card">
+                <div class="card-title">DNS Servers</div>
+                <div class="row">
+                    <div><label>Primary</label><input type="text" id="dns1" placeholder="8.8.8.8"></div>
+                    <div><label>Secondary</label><input type="text" id="dns2" placeholder="1.1.1.1"></div>
+                </div>
+                <div class="toggle-row">
+                    <div class="toggle-text">Force through VPN<small>Ignore upstream DNS</small></div>
+                    <label class="switch"><input type="checkbox" id="forceDns"><span class="slider"></span></label>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="saveDNS()">Save</button>
+                </div>
+                <div style="margin-top:12px">
+                    <label>Presets</label>
+                    <div class="presets">
+                        <button class="btn" onclick="setDNS('8.8.8.8','8.8.4.4')">Google</button>
+                        <button class="btn" onclick="setDNS('1.1.1.1','1.0.0.1')">Cloudflare</button>
+                        <button class="btn" onclick="setDNS('9.9.9.9','149.112.112.112')">Quad9</button>
+                        <button class="btn" onclick="setDNS('208.67.222.222','208.67.220.220')">OpenDNS</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Proxy -->
+        <div class="panel" id="panel-proxy">
+            <div class="card">
+                <div class="card-title">Residential Proxy</div>
+                <p class="hint">Route traffic through residential proxies with automatic rotation.</p>
+                <div style="margin:10px 0;padding:10px;background:rgba(255,152,0,0.08);border:1px solid rgba(255,152,0,0.15);border-radius:6px;font-size:12px;color:#ccc;line-height:1.6">
+                    <strong style="color:#ff9800">&#9888; Proxy mode info</strong><br>
+                    &#8226; Only <b>TCP traffic</b> (HTTP/HTTPS) goes through the proxy<br>
+                    &#8226; <b>UDP traffic</b> (games, VoIP) is not proxied — use VPN mode for full coverage<br>
+                    &#8226; QUIC (UDP 443) is auto-blocked so browsers fall back to TCP<br>
+                    &#8226; Speed: ~12-15 Mbps (residential) — enough for browsing and streaming
+                </div>
+                <div class="toggle-row">
+                    <div class="toggle-text">Enable Proxy<small id="proxyStatus">Disabled</small></div>
+                    <label class="switch"><input type="checkbox" id="proxyEnabled" onchange="toggleProxy()"><span class="slider"></span></label>
+                </div>
+                <div class="toggle-row" style="margin-top:10px;border-top:1px solid var(--border);padding-top:12px">
+                    <div class="toggle-text" style="padding-right:15px">
+                        Bypass Developer Ports
+                        <small style="margin-bottom:4px">Bypass residential proxy for Git/SSH (Ports 22, 9418) since proxy providers often block them.</small>
+                        <small style="color:#ff9800;font-size:10px">⚠ Warning: Bypassed traffic goes via VPN if active, otherwise uses raw Wi-Fi (IP will be visible).</small>
+                    </div>
+                    <label class="switch"><input type="checkbox" id="bypassDevPorts" onchange="toggleBypassDevPorts()"><span class="slider"></span></label>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-title">Rotation Mode</div>
+                <select id="proxyMode" onchange="setProxyMode()" style="width:100%;padding:8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px">
+                    <option value="round-robin">Round Robin</option>
+                    <option value="random">Random</option>
+                    <option value="sticky">Sticky (per domain)</option>
+                </select>
+            </div>
+            <div class="card">
+                <div class="card-title">Proxies</div>
+                <div id="proxyList"></div>
+                <div id="proxyTestResult" style="margin-top:10px"></div>
+            </div>
+            <div class="card">
+                <div class="card-title">Add Proxy</div>
+                <label>Name</label>
+                <input type="text" id="proxyName" placeholder="e.g. US Residential">
+                <label>Protocol</label>
+                <select id="proxyProtocol">
+                    <option value="http">HTTP</option>
+                    <option value="https">HTTPS</option>
+                    <option value="socks5">SOCKS5</option>
+                </select>
+                <div class="row">
+                    <div><label>Host</label><input type="text" id="proxyHost" placeholder="proxy.example.com"></div>
+                    <div><label>Port</label><input type="text" id="proxyPort" placeholder="50100"></div>
+                </div>
+                <div class="row">
+                    <div><label>Username</label><input type="text" id="proxyUser" placeholder="user"></div>
+                    <div><label>Password</label><input type="password" id="proxyPass" placeholder="pass"></div>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="addProxy()">Add</button>
+                    <button class="btn" onclick="testProxy()">Test Connection</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- System -->
+        <div class="panel" id="panel-system">
+            <div class="card">
+                <div class="card-title">Device</div>
+                <div class="stats" style="margin-bottom:0">
+                    <div class="stat"><div class="stat-label">Temp</div><div class="stat-val" id="cpuTemp">—</div></div>
+                    <div class="stat"><div class="stat-label">Memory</div><div class="stat-val" id="memUsage">—</div></div>
+                    <div class="stat"><div class="stat-label">Load</div><div class="stat-val" id="sysLoad">—</div></div>
+                    <div class="stat"><div class="stat-label">Uptime</div><div class="stat-val" id="sysUptime">—</div></div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="btn-group" style="margin-top:0">
+                    <button class="btn btn-danger" onclick="rebootSystem()">Reboot</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Logs -->
+        <div class="panel" id="panel-logs">
+            <div class="card">
+                <div class="card-title">Logs</div>
+                <select id="logSource" onchange="loadLogs()" style="width:100%;padding:8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;margin-bottom:10px">
+                    <option value="app">App (shadowplug)</option>
+                    <option value="proxy">Proxy Server</option>
+                    <option value="system">System Log</option>
+                    <option value="dnsmasq">DNS (dnsmasq)</option>
+                </select>
+                <div id="logContent" style="background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:12px;font-family:monospace;font-size:12px;line-height:1.6;max-height:400px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;color:var(--text-dim)">Loading...</div>
+                <div class="btn-group" style="margin-top:10px">
+                    <button class="btn btn-primary" onclick="loadLogs()">Refresh</button>
+                    <button class="btn btn-danger" onclick="clearLogs()">Clear</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="toast" id="toast"></div>
+    <script src="app.js"></script>
+</body>
+</html>

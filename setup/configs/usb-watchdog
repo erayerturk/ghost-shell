@@ -1,0 +1,94 @@
+#!/bin/sh
+# ShadowPlug USB Gadget Watchdog Daemon
+# Runs in background, checks every 5 seconds.
+# Ensures USB Ethernet adapter auto-recovers after disconnect/sleep.
+
+G=/sys/kernel/config/usb_gadget/g1
+
+check_gadget() {
+    # Re-init gadget if missing
+    if [ ! -d "$G" ]; then
+        logger "shadowplug-watchdog: gadget missing, restarting..."
+        /etc/init.d/usb-gadget start
+        return
+    fi
+
+    # Rebind UDC if unbound
+    UDC_VAL=$(cat "$G/UDC" 2>/dev/null)
+    if [ -z "$UDC_VAL" ]; then
+        logger "shadowplug-watchdog: UDC unbound, rebinding..."
+        UDC=$(ls /sys/class/udc | head -1)
+        echo "$UDC" > "$G/UDC" 2>/dev/null
+        sleep 2
+    fi
+
+    # Assign IP if carrier up but no IP
+    for iface in usb0 usb1; do
+        if [ -e /sys/class/net/$iface ]; then
+            ip link set $iface up 2>/dev/null
+            CARRIER=$(cat /sys/class/net/$iface/carrier 2>/dev/null)
+            HAS_IP=$(ip addr show $iface 2>/dev/null | grep "192.168.7.1" | wc -l)
+            if [ "$CARRIER" = "1" ] && [ "$HAS_IP" = "0" ]; then
+                ip addr add 192.168.7.1/24 dev $iface 2>/dev/null
+                logger "shadowplug-watchdog: reassigned IP to $iface"
+            fi
+        fi
+    done
+}
+
+# Randomize WiFi MAC on startup
+randomize_mac() {
+    WLAN=""
+    for iface in phy0-sta0 wlan0 wlan1; do
+        if [ -e /sys/class/net/$iface ]; then
+            WLAN=$iface
+            break
+        fi
+    done
+    if [ -n "$WLAN" ]; then
+        # Generate random locally-administered MAC (x2:xx:xx:xx:xx:xx)
+        MAC=$(hexdump -n 6 -e '6/1 "%02x:"' /dev/urandom | sed 's/:$//' | sed 's/^\(.\)/\12/')
+        ip link set $WLAN down 2>/dev/null
+        ip link set $WLAN address "$MAC" 2>/dev/null
+        ip link set $WLAN up 2>/dev/null
+        logger "shadowplug-watchdog: WiFi MAC randomized to $MAC on $WLAN"
+    fi
+}
+
+# Randomize MAC once at daemon start
+randomize_mac
+
+# WiFi keepalive state
+WIFI_FAIL_COUNT=0
+
+check_wifi() {
+    # Only check every 6th iteration (~30 seconds)
+    WIFI_FAIL_COUNT=$((WIFI_FAIL_COUNT + 1))
+    if [ $((WIFI_FAIL_COUNT % 6)) -ne 0 ]; then
+        return
+    fi
+
+    # Check internet connectivity
+    if ping -c 1 -W 3 8.8.8.8 >/dev/null 2>&1; then
+        WIFI_FAIL_COUNT=0
+        return
+    fi
+
+    # No internet — try wifi reload first
+    FAILS=$((WIFI_FAIL_COUNT / 6))
+    if [ "$FAILS" -le 3 ]; then
+        logger "shadowplug-watchdog: WiFi down, reloading... (attempt $FAILS)"
+        wifi reload 2>/dev/null
+    elif [ "$FAILS" = 4 ]; then
+        # After 3 fails, try auto-connect via API
+        logger "shadowplug-watchdog: WiFi persistent failure, trying auto-connect..."
+        curl -s -X POST http://127.0.0.1:8080/api/wifi/auto-connect >/dev/null 2>&1
+    fi
+}
+
+# Run as daemon loop
+while true; do
+    check_gadget
+    check_wifi
+    sleep 5
+done

@@ -1,0 +1,78 @@
+#!/bin/sh /etc/rc.common
+START=99
+
+start() {
+    mount -t configfs none /sys/kernel/config 2>/dev/null
+    modprobe libcomposite 2>/dev/null
+    modprobe usb_f_ncm 2>/dev/null
+    modprobe usb_f_ecm 2>/dev/null
+
+    G=/sys/kernel/config/usb_gadget/g1
+    mkdir -p $G
+    cd $G
+
+    echo 0x1d6b > idVendor
+    echo 0x0104 > idProduct
+    echo 0x0100 > bcdDevice
+    echo 0x0200 > bcdUSB
+    echo 0xEF > bDeviceClass
+    echo 0x02 > bDeviceSubClass
+    echo 0x01 > bDeviceProtocol
+
+    mkdir -p strings/0x409
+    echo "ShadowPlug001" > strings/0x409/serialnumber
+    echo "ShadowPlug" > strings/0x409/manufacturer
+    echo "VPN Ethernet Adapter" > strings/0x409/product
+
+    # NCM (Windows 10+ / Linux) — fixed MACs
+    mkdir -p functions/ncm.usb0
+    echo "a2:a2:a2:a2:a2:01" > functions/ncm.usb0/dev_addr
+    echo "a2:a2:a2:a2:a2:02" > functions/ncm.usb0/host_addr
+
+    # ECM (Mac/Linux fallback) — fixed MACs
+    mkdir -p functions/ecm.usb0
+    echo "a2:a2:a2:a2:a2:03" > functions/ecm.usb0/dev_addr
+    echo "a2:a2:a2:a2:a2:04" > functions/ecm.usb0/host_addr
+
+    # Config 1: NCM (Windows 10+ picks this natively)
+    mkdir -p configs/c.1/strings/0x409
+    echo "NCM Network" > configs/c.1/strings/0x409/configuration
+    echo 250 > configs/c.1/MaxPower
+    ln -sf functions/ncm.usb0 configs/c.1/ 2>/dev/null
+
+    # Config 2: ECM (Mac picks this)
+    mkdir -p configs/c.2/strings/0x409
+    echo "ECM Network" > configs/c.2/strings/0x409/configuration
+    echo 250 > configs/c.2/MaxPower
+    ln -sf functions/ecm.usb0 configs/c.2/ 2>/dev/null
+
+    UDC=$(ls /sys/class/udc | head -1)
+    echo "$UDC" > UDC
+    sleep 5
+
+    for iface in usb0 usb1; do
+        if [ -e /sys/class/net/$iface ]; then
+            ip link set $iface up 2>/dev/null
+            CARRIER=$(cat /sys/class/net/$iface/carrier 2>/dev/null)
+            if [ "$CARRIER" = "1" ]; then
+                ip addr add 192.168.7.1/24 dev $iface 2>/dev/null
+                logger "shadowplug: $iface carrier UP, IP assigned"
+            else
+                logger "shadowplug: $iface no carrier, skipping"
+            fi
+        fi
+    done
+
+    HAS_IP=$(ip addr show 2>/dev/null | grep "192.168.7.1" | wc -l)
+    if [ "$HAS_IP" = "0" ]; then
+        for iface in usb0 usb1; do
+            [ -e /sys/class/net/$iface ] && ip addr add 192.168.7.1/24 dev $iface 2>/dev/null
+        done
+    fi
+
+    logger "shadowplug: USB gadget started (NCM+ECM)"
+}
+
+stop() {
+    echo "" > /sys/kernel/config/usb_gadget/g1/UDC 2>/dev/null
+}
