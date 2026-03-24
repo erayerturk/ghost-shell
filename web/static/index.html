@@ -34,24 +34,6 @@
 
         <!-- VPN -->
         <div class="panel active" id="panel-vpn">
-            <!-- ShadowPlug Built-in VPN (Shown if licensed) -->
-            <div class="card" id="defaultVpnCard" style="display:none; border:1px solid #0096ff">
-                <div class="card-title">ShadowPlug Built-in VPN 🛡️</div>
-                <div style="margin:10px 0;padding:10px;background:rgba(255,152,0,0.08);border:1px solid rgba(255,152,0,0.15);border-radius:6px;font-size:12px;color:#ccc;line-height:1.6">
-                    <strong style="color:#ff9800">&#9888; Legal & Usage Notice</strong><br>
-                    This is a complimentary <strong>5 Mbps VPN</strong> provided for demo purposes only with your license.<br>
-                    You are legally responsible for any abuse or illegal activities conducted through this connection.
-                </div>
-                <div class="row">
-                    <div><div class="stat-label">Server</div><div class="stat-val" id="defaultVpnServer" style="font-size:13px">—</div></div>
-                    <div><div class="stat-label">Status</div><div class="stat-val" id="defaultVpnStatus" style="font-size:13px">Disconnected</div></div>
-                </div>
-                <div class="btn-group">
-                    <button class="btn btn-primary" id="btnActivateDefaultVpn" style="width:100%" onclick="activateDefaultVPN()">Activate Built-in VPN</button>
-                    <button class="btn" id="btnDeactivateDefaultVpn" style="width:100%; display:none" onclick="deactivateDefaultVPN()">Disconnect Default VPN</button>
-                </div>
-            </div>
-
             <!-- Custom VPN -->
             <div class="card" id="customVpnCard">
                 <div class="card-title">Custom VPN (WireGuard)</div>

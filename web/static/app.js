@@ -83,49 +83,6 @@ async function refreshStatus() {
     }
 }
 
-// ─── VPN ────────────────────────────────────
-
-async function loadDefaultVPN() {
-    const data = await api('license/status');
-    if (data && data.valid) {
-        document.getElementById('defaultVpnCard').style.display = 'block';
-    }
-}
-
-async function activateDefaultVPN() {
-    const btn = document.getElementById('btnActivateDefaultVpn');
-    btn.textContent = 'Activating...';
-    btn.disabled = true;
-    toast('Registering device & connecting...');
-    const res = await api('vpn/default', 'POST');
-    btn.disabled = false;
-    btn.textContent = 'Activate Built-in VPN';
-    
-    if (res && res.success) {
-        toast('Connected to Default VPN!', 'success');
-        setTimeout(() => { loadVPN(); refreshStatus(); }, 2000);
-    } else {
-        toast(res ? res.message : 'Activation failed', 'error');
-    }
-}
-
-async function deactivateDefaultVPN() {
-    const btn = document.getElementById('btnDeactivateDefaultVpn');
-    btn.textContent = 'Disconnecting...';
-    btn.disabled = true;
-    toast('Disconnecting Built-in VPN...');
-    const res = await api('vpn/default_disconnect', 'POST');
-    btn.disabled = false;
-    btn.textContent = 'Disconnect Default VPN';
-    
-    if (res && res.success) {
-        toast('Disconnected Built-in VPN!', 'success');
-        setTimeout(() => { loadVPN(); refreshStatus(); }, 2000);
-    } else {
-        toast(res ? res.message : 'Disconnection failed', 'error');
-    }
-}
-
 async function loadVPN() {
     const data = await api('vpn');
     if (!data) return;
@@ -135,26 +92,6 @@ async function loadVPN() {
     document.getElementById('vpnPeerPublicKey').value = data.peer_public_key || '';
     document.getElementById('vpnAddress').value = data.address || '';
     document.getElementById('vpnAllowedIPs').value = data.allowed_ips || '0.0.0.0/0';
-
-    // Toggle UI based on whether VPN is connected with any endpoint
-    const hasEndpoint = data.endpoint && data.endpoint.length > 0;
-    const wgOutput = await api('status');
-    const isConnected = wgOutput && wgOutput.vpn_connected;
-    // Custom VPN card is always visible so users can configure their own VPN
-    document.getElementById('customVpnCard').style.display = 'block';
-    if (hasEndpoint && isConnected) {
-        document.getElementById('btnActivateDefaultVpn').style.display = 'none';
-        document.getElementById('btnDeactivateDefaultVpn').style.display = 'block';
-        document.getElementById('defaultVpnStatus').textContent = 'Connected';
-        document.getElementById('defaultVpnStatus').style.color = 'var(--green)';
-        document.getElementById('defaultVpnServer').textContent = data.endpoint;
-    } else {
-        document.getElementById('btnActivateDefaultVpn').style.display = 'block';
-        document.getElementById('btnDeactivateDefaultVpn').style.display = 'none';
-        document.getElementById('defaultVpnStatus').textContent = 'Disconnected';
-        document.getElementById('defaultVpnStatus').style.color = '';
-        document.getElementById('defaultVpnServer').textContent = '—';
-    }
 }
 
 async function saveVPN() {
@@ -705,7 +642,7 @@ document.querySelectorAll('.tab').forEach(tab => {
 
 async function init() {
     await Promise.all([
-        refreshStatus(), loadDefaultVPN(), loadVPN(), loadProfiles(), loadBlocking(),
+        refreshStatus(), loadVPN(), loadProfiles(), loadBlocking(),
         loadWiFi(), loadMAC(), loadBandwidth(), loadSplit(), loadFirewall(),
         loadPrivacy(), loadDNS(), loadSystem(), loadProxy()
     ]);
