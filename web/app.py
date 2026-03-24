@@ -323,7 +323,7 @@ def vpn_toggle():
         run("ifdown wg0 2>/dev/null; ifup wg0")
         return jsonify({'success': True, 'message': 'Custom VPN started', 'vpn_connected': True})
     else:
-        run("ifdown wg0 2>/dev/null")
+        run("ifdown wg0 2>/dev/null; ip link delete dev wg0 2>/dev/null; ip route replace default via 192.168.3.1 dev phy0-sta0 2>/dev/null")
         return jsonify({'success': True, 'message': 'Custom VPN stopped', 'vpn_connected': False})
 
 
