@@ -228,29 +228,23 @@ def status():
 
 VPN_PROFILES_FILE = os.path.join(DATA_DIR, 'vpn_profiles.json')
 
+CUSTOM_VPN_FILE = os.path.join(DATA_DIR, 'custom_vpn.json')
+
 @app.route('/api/vpn', methods=['GET'])
 def vpn_get():
-    endpoint = run("uci get network.@wireguard_wg0[0].endpoint_host 2>/dev/null")
-    endpoint_port = run("uci get network.@wireguard_wg0[0].endpoint_port 2>/dev/null") or '51820'
-    private_key = run("uci get network.wg0.private_key 2>/dev/null")
-    peer_public_key = run("uci get network.@wireguard_wg0[0].public_key 2>/dev/null")
-    addresses = run("uci get network.wg0.addresses 2>/dev/null")
-    allowed_ips = run("uci get network.@wireguard_wg0[0].allowed_ips 2>/dev/null")
-    persistent_keepalive = run("uci get network.@wireguard_wg0[0].persistent_keepalive 2>/dev/null") or '25'
-
-    return jsonify({
-        'endpoint': endpoint,
-        'endpoint_port': endpoint_port,
-        'private_key': private_key,
-        'peer_public_key': peer_public_key,
-        'address': addresses,
-        'allowed_ips': allowed_ips,
-        'persistent_keepalive': persistent_keepalive,
+    cfg = read_json(CUSTOM_VPN_FILE, {
+        'endpoint': '', 'endpoint_port': '51820',
+        'private_key': '', 'peer_public_key': '',
+        'address': '', 'allowed_ips': '0.0.0.0/0',
+        'persistent_keepalive': '25'
     })
+    return jsonify(cfg)
 
 @app.route('/api/vpn', methods=['POST'])
 def vpn_set():
     data = request.json
+    write_json(CUSTOM_VPN_FILE, data)
+    
     cmds = []
     if 'endpoint' in data:
         cmds.append(f"uci set network.@wireguard_wg0[0].endpoint_host='{data['endpoint']}'")
@@ -279,7 +273,7 @@ def vpn_set():
         proxy_config['enabled'] = False
         write_json(os.path.join(DATA_DIR, 'proxy.json'), proxy_config)
 
-    return jsonify({'success': True, 'message': 'VPN configuration updated. Proxy disabled.'})
+    return jsonify({'success': True, 'message': 'VPN configuration saved.'})
 
 @app.route('/api/vpn/test', methods=['POST'])
 def vpn_test():
@@ -302,7 +296,7 @@ def vpn_generate_keys():
 
 @app.route('/api/vpn/toggle', methods=['POST'])
 def vpn_toggle():
-    """Toggle VPN on/off."""
+    """Toggle Custom VPN on/off."""
     data = request.json or {}
     action = data.get('action', 'toggle')
     wg_output = run("wg show wg0 2>/dev/null")
@@ -312,11 +306,25 @@ def vpn_toggle():
         action = 'down' if is_up else 'up'
 
     if action == 'up':
-        run("ifup wg0 2>/dev/null")
-        return jsonify({'success': True, 'message': 'VPN started', 'vpn_connected': True})
+        # Apply custom_vpn config to UCI so it overrides whatever is currently running
+        cfg = read_json(CUSTOM_VPN_FILE, {})
+        if cfg:
+            cmds = []
+            if cfg.get('endpoint'): cmds.append(f"uci set network.@wireguard_wg0[0].endpoint_host='{cfg['endpoint']}'")
+            if cfg.get('endpoint_port'): cmds.append(f"uci set network.@wireguard_wg0[0].endpoint_port='{cfg['endpoint_port']}'")
+            if cfg.get('private_key'): cmds.append(f"uci set network.wg0.private_key='{cfg['private_key']}'")
+            if cfg.get('peer_public_key'): cmds.append(f"uci set network.@wireguard_wg0[0].public_key='{cfg['peer_public_key']}'")
+            if cfg.get('address'): cmds.append(f"uci set network.wg0.addresses='{cfg['address']}'")
+            if cfg.get('allowed_ips'): cmds.append(f"uci set network.@wireguard_wg0[0].allowed_ips='{cfg['allowed_ips']}'")
+            if cfg.get('persistent_keepalive'): cmds.append(f"uci set network.@wireguard_wg0[0].persistent_keepalive='{cfg['persistent_keepalive']}'")
+            cmds.append("uci commit network")
+            for c in cmds: run(c)
+
+        run("ifdown wg0 2>/dev/null; ifup wg0")
+        return jsonify({'success': True, 'message': 'Custom VPN started', 'vpn_connected': True})
     else:
         run("ifdown wg0 2>/dev/null")
-        return jsonify({'success': True, 'message': 'VPN stopped', 'vpn_connected': False})
+        return jsonify({'success': True, 'message': 'Custom VPN stopped', 'vpn_connected': False})
 
 
 
