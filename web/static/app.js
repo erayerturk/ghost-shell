@@ -493,7 +493,8 @@ async function loadSystem() {
     const total = Math.round(parseInt(data.mem_total) / 1024);
     const free = Math.round(parseInt(data.mem_free) / 1024);
     document.getElementById('memUsage').textContent = `${total - free}/${total} MB`;
-    document.getElementById('sysLoad').textContent = data.load || '—';
+    const cpuVal = parseFloat(data.cpu_usage || '0');
+    document.getElementById('sysLoad').textContent = !isNaN(cpuVal) ? Math.round(cpuVal) + '%' : '—';
 }
 
 async function rebootSystem() {
@@ -590,6 +591,7 @@ async function toggleProxy() {
         if (res) toast(res.message);
     }
     loadProxy();
+    setTimeout(refreshStatus, 3000);
 }
 
 async function toggleBypassDevPorts() {
@@ -649,6 +651,13 @@ async function init() {
     setInterval(refreshStatus, 10000);
     setInterval(loadSystem, 30000);
     setInterval(loadWiFi, 30000);
+}
+
+async function logout() {
+    try {
+        await fetch('/api/auth/logout', { method: 'POST' });
+    } catch(e) {}
+    window.location.href = '/login';
 }
 
 init();

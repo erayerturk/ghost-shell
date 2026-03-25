@@ -1,15 +1,189 @@
 #!/bin/sh
 # ShadowPlug USB Gadget Watchdog Daemon
-# Runs in background, checks every 5 seconds.
-# Ensures USB Ethernet adapter auto-recovers after disconnect/sleep.
+# Ensures USB Ethernet auto-recovers after disconnect/sleep/inactive.
+# Uses escalating recovery: UDC rebind -> full gadget teardown/recreate -> dwc2 driver rebind
 
 G=/sys/kernel/config/usb_gadget/g1
+PREV_CARRIER=1
+CARRIER_LOST_TIME=0
+RECOVERY_LEVEL=0
+
+# Full gadget teardown - software equivalent of physical unplug
+teardown_gadget() {
+    logger "shadowplug-watchdog: tearing down USB gadget..."
+    echo "" > "$G/UDC" 2>/dev/null
+
+    # Unlink functions from configs
+    rm -f $G/configs/c.1/rndis.usb0 2>/dev/null
+    rm -f $G/configs/c.2/ecm.usb0 2>/dev/null
+    rm -f $G/configs/c.3/ncm.usb0 2>/dev/null
+    # Also handle old NCM+ECM layout
+    rm -f $G/configs/c.1/ncm.usb0 2>/dev/null
+    rm -f $G/configs/c.1/ecm.usb0 2>/dev/null
+    rm -f $G/configs/c.2/ncm.usb0 2>/dev/null
+
+    # Remove OS descriptors link
+    rm -f $G/os_desc/c.1 2>/dev/null
+
+    # Remove config strings
+    rmdir $G/configs/c.1/strings/0x409 2>/dev/null
+    rmdir $G/configs/c.2/strings/0x409 2>/dev/null
+    rmdir $G/configs/c.3/strings/0x409 2>/dev/null
+
+    # Remove configs
+    rmdir $G/configs/c.1 2>/dev/null
+    rmdir $G/configs/c.2 2>/dev/null
+    rmdir $G/configs/c.3 2>/dev/null
+
+    # Remove functions
+    rmdir $G/functions/rndis.usb0 2>/dev/null
+    rmdir $G/functions/ecm.usb0 2>/dev/null
+    rmdir $G/functions/ncm.usb0 2>/dev/null
+
+    # Remove gadget strings and gadget itself
+    rmdir $G/strings/0x409 2>/dev/null
+    rmdir $G 2>/dev/null
+
+    sleep 1
+}
+
+# Full gadget setup - software equivalent of physical replug
+# Must match /etc/init.d/usb-gadget exactly (RNDIS+ECM+NCM)
+setup_gadget() {
+    logger "shadowplug-watchdog: creating USB gadget..."
+
+    mount -t configfs none /sys/kernel/config 2>/dev/null
+    modprobe libcomposite 2>/dev/null
+    modprobe usb_f_rndis 2>/dev/null
+    modprobe usb_f_ecm 2>/dev/null
+    modprobe usb_f_ncm 2>/dev/null
+
+    mkdir -p $G
+    cd $G
+
+    echo 0x1d6b > idVendor
+    echo 0x0104 > idProduct
+    echo 0x0100 > bcdDevice
+    echo 0x0200 > bcdUSB
+    echo 0xEF > bDeviceClass
+    echo 0x02 > bDeviceSubClass
+    echo 0x01 > bDeviceProtocol
+
+    mkdir -p strings/0x409
+    echo "GhostShell001" > strings/0x409/serialnumber
+    echo "Ghost Shell" > strings/0x409/manufacturer
+    echo "VPN Ethernet Adapter" > strings/0x409/product
+
+    # RNDIS (Windows)
+    mkdir -p functions/rndis.usb0
+    echo "a2:a2:a2:a2:a2:01" > functions/rndis.usb0/dev_addr
+    echo "a2:a2:a2:a2:a2:02" > functions/rndis.usb0/host_addr
+
+    # ECM (Mac/Linux)
+    mkdir -p functions/ecm.usb0
+    echo "a2:a2:a2:a2:a2:03" > functions/ecm.usb0/dev_addr
+    echo "a2:a2:a2:a2:a2:04" > functions/ecm.usb0/host_addr
+
+    # Microsoft OS descriptors for RNDIS
+    echo 1 > os_desc/use
+    echo 0xcd > os_desc/b_vendor_code
+    echo MSFT100 > os_desc/qw_sign
+    mkdir -p functions/rndis.usb0/os_desc/interface.rndis
+    echo RNDIS > functions/rndis.usb0/os_desc/interface.rndis/compatible_id
+    echo 5162001 > functions/rndis.usb0/os_desc/interface.rndis/sub_compatible_id
+
+    # Config 1: RNDIS (Windows picks this)
+    mkdir -p configs/c.1/strings/0x409
+    echo "RNDIS Network" > configs/c.1/strings/0x409/configuration
+    echo 250 > configs/c.1/MaxPower
+    ln -sf functions/rndis.usb0 configs/c.1/ 2>/dev/null
+    ln -sf configs/c.1 os_desc/ 2>/dev/null
+
+    # Config 2: ECM (Mac picks this)
+    mkdir -p configs/c.2/strings/0x409
+    echo "ECM Network" > configs/c.2/strings/0x409/configuration
+    echo 250 > configs/c.2/MaxPower
+    ln -sf functions/ecm.usb0 configs/c.2/ 2>/dev/null
+
+    # NCM (Windows 10+)
+    mkdir -p functions/ncm.usb0
+    echo "a2:a2:a2:a2:a2:05" > functions/ncm.usb0/dev_addr
+    echo "a2:a2:a2:a2:a2:06" > functions/ncm.usb0/host_addr
+
+    # Config 3: NCM (Windows 10+ picks this)
+    mkdir -p configs/c.3/strings/0x409
+    echo "NCM Network" > configs/c.3/strings/0x409/configuration
+    echo 250 > configs/c.3/MaxPower
+    ln -sf functions/ncm.usb0 configs/c.3/ 2>/dev/null
+
+    # Bind UDC
+    UDC=$(ls /sys/class/udc | head -1)
+    echo "$UDC" > UDC
+    sleep 5
+
+    # Bring up interfaces and assign IP
+    for iface in usb0 usb1 usb2; do
+        if [ -e /sys/class/net/$iface ]; then
+            ip link set $iface up 2>/dev/null
+            C=$(cat /sys/class/net/$iface/carrier 2>/dev/null)
+            if [ "$C" = "1" ]; then
+                ip addr add 192.168.7.1/24 dev $iface 2>/dev/null
+                /etc/init.d/dnsmasq restart 2>/dev/null
+                # Ensure firewall (NAT/masquerade) is active
+                FW_STATUS=$(/etc/init.d/firewall status 2>/dev/null)
+                if echo "$FW_STATUS" | grep -q 'inactive'; then
+                    /etc/init.d/firewall restart 2>/dev/null
+                    logger "shadowplug-watchdog: firewall was inactive, restarted"
+                fi
+                logger "shadowplug-watchdog: gadget recreated, $iface carrier UP"
+                return 0
+            fi
+        fi
+    done
+
+    # Fallback: assign IP to all USB interfaces
+    HAS_IP=$(ip addr show 2>/dev/null | grep "192.168.7.1" | wc -l)
+    if [ "$HAS_IP" = "0" ]; then
+        for iface in usb0 usb1 usb2; do
+            [ -e /sys/class/net/$iface ] && ip addr add 192.168.7.1/24 dev $iface 2>/dev/null
+        done
+    fi
+
+    logger "shadowplug-watchdog: gadget recreated, no carrier yet"
+    return 1
+}
+
+# Rebind dwc2 driver - nuclear option
+rebind_dwc2() {
+    DWC2_DEV=""
+    for dev in /sys/bus/platform/drivers/dwc2/*; do
+        case "$dev" in
+            *bind|*uevent) continue ;;
+        esac
+        if [ -d "$dev" ]; then
+            DWC2_DEV=$(basename "$dev")
+            break
+        fi
+    done
+
+    if [ -z "$DWC2_DEV" ]; then
+        logger "shadowplug-watchdog: dwc2 device not found, skipping driver rebind"
+        return 1
+    fi
+
+    logger "shadowplug-watchdog: rebinding dwc2 driver ($DWC2_DEV)..."
+    echo "$DWC2_DEV" > /sys/bus/platform/drivers/dwc2/unbind 2>/dev/null
+    sleep 2
+    echo "$DWC2_DEV" > /sys/bus/platform/drivers/dwc2/bind 2>/dev/null
+    sleep 3
+    return 0
+}
 
 check_gadget() {
     # Re-init gadget if missing
     if [ ! -d "$G" ]; then
-        logger "shadowplug-watchdog: gadget missing, restarting..."
-        /etc/init.d/usb-gadget start
+        logger "shadowplug-watchdog: gadget missing, recreating..."
+        setup_gadget
         return
     fi
 
@@ -22,18 +196,99 @@ check_gadget() {
         sleep 2
     fi
 
-    # Assign IP if carrier up but no IP
-    for iface in usb0 usb1; do
+    # Check carrier on all USB interfaces
+    CURRENT_CARRIER=0
+    ACTIVE_IFACE=""
+    for iface in usb0 usb1 usb2; do
         if [ -e /sys/class/net/$iface ]; then
             ip link set $iface up 2>/dev/null
-            CARRIER=$(cat /sys/class/net/$iface/carrier 2>/dev/null)
-            HAS_IP=$(ip addr show $iface 2>/dev/null | grep "192.168.7.1" | wc -l)
-            if [ "$CARRIER" = "1" ] && [ "$HAS_IP" = "0" ]; then
-                ip addr add 192.168.7.1/24 dev $iface 2>/dev/null
-                logger "shadowplug-watchdog: reassigned IP to $iface"
+            C=$(cat /sys/class/net/$iface/carrier 2>/dev/null)
+            if [ "$C" = "1" ]; then
+                CURRENT_CARRIER=1
+                ACTIVE_IFACE=$iface
+                break
             fi
         fi
     done
+
+    # Carrier lost -> start tracking
+    if [ "$CURRENT_CARRIER" = "0" ] && [ "$PREV_CARRIER" = "1" ]; then
+        CARRIER_LOST_TIME=$(date +%s)
+        RECOVERY_LEVEL=0
+        logger "shadowplug-watchdog: USB carrier lost, monitoring..."
+    fi
+
+    # Carrier recovered -> ensure IP and services are ready
+    if [ "$CURRENT_CARRIER" = "1" ] && [ "$PREV_CARRIER" = "0" ]; then
+        logger "shadowplug-watchdog: USB carrier recovered on $ACTIVE_IFACE"
+        # Just ensure IP is assigned, no need to bounce the link. Bouncing causes PC/Mac disconnects.
+        HAS_IP=$(ip addr show $ACTIVE_IFACE 2>/dev/null | grep "192.168.7.1" | wc -l)
+        if [ "$HAS_IP" = "0" ]; then
+            ip addr add 192.168.7.1/24 dev $ACTIVE_IFACE 2>/dev/null
+            logger "shadowplug-watchdog: assigned IP to $ACTIVE_IFACE"
+        fi
+        # Only restart dnsmasq if it's NOT running or after a long carrier loss
+        /etc/init.d/dnsmasq restart 2>/dev/null
+        CARRIER_LOST_TIME=0
+        RECOVERY_LEVEL=0
+    fi
+
+    # Carrier still up - ensure IP is assigned
+    if [ "$CURRENT_CARRIER" = "1" ] && [ -n "$ACTIVE_IFACE" ]; then
+        HAS_IP=$(ip addr show $ACTIVE_IFACE 2>/dev/null | grep "192.168.7.1" | wc -l)
+        if [ "$HAS_IP" = "0" ]; then
+            ip addr add 192.168.7.1/24 dev $ACTIVE_IFACE 2>/dev/null
+            /etc/init.d/dnsmasq restart 2>/dev/null
+            logger "shadowplug-watchdog: reassigned IP to $ACTIVE_IFACE"
+        fi
+    fi
+
+    # Escalating recovery when carrier is lost
+    if [ "$CURRENT_CARRIER" = "0" ] && [ "$CARRIER_LOST_TIME" != "0" ]; then
+        NOW=$(date +%s)
+        ELAPSED=$((NOW - CARRIER_LOST_TIME))
+
+        # Level 0: After 10s — soft UDC rebind
+        if [ "$RECOVERY_LEVEL" = "0" ] && [ "$ELAPSED" -gt 10 ]; then
+            logger "shadowplug-watchdog: L0 recovery — UDC rebind (${ELAPSED}s elapsed)"
+            echo "" > "$G/UDC" 2>/dev/null
+            sleep 1
+            UDC=$(ls /sys/class/udc | head -1)
+            echo "$UDC" > "$G/UDC" 2>/dev/null
+            sleep 3
+            RECOVERY_LEVEL=1
+            CARRIER_LOST_TIME=$(date +%s)
+        fi
+
+        # Level 1: After 15s — full gadget teardown/recreate (= physical replug)
+        if [ "$RECOVERY_LEVEL" = "1" ] && [ "$ELAPSED" -gt 15 ]; then
+            logger "shadowplug-watchdog: L1 recovery — full gadget teardown/recreate (${ELAPSED}s elapsed)"
+            teardown_gadget
+            setup_gadget
+            RECOVERY_LEVEL=2
+            CARRIER_LOST_TIME=$(date +%s)
+        fi
+
+        # Level 2: After 20s — dwc2 driver rebind (nuclear option)
+        if [ "$RECOVERY_LEVEL" = "2" ] && [ "$ELAPSED" -gt 20 ]; then
+            logger "shadowplug-watchdog: L2 recovery — dwc2 driver rebind (${ELAPSED}s elapsed)"
+            teardown_gadget
+            rebind_dwc2
+            sleep 2
+            setup_gadget
+            RECOVERY_LEVEL=3
+            CARRIER_LOST_TIME=$(date +%s)
+        fi
+
+        # Level 3: After 30s — repeat full cycle from L1
+        if [ "$RECOVERY_LEVEL" = "3" ] && [ "$ELAPSED" -gt 30 ]; then
+            logger "shadowplug-watchdog: recovery cycle reset, retrying..."
+            RECOVERY_LEVEL=1
+            CARRIER_LOST_TIME=$(date +%s)
+        fi
+    fi
+
+    PREV_CARRIER=$CURRENT_CARRIER
 }
 
 # Randomize WiFi MAC on startup
@@ -46,7 +301,6 @@ randomize_mac() {
         fi
     done
     if [ -n "$WLAN" ]; then
-        # Generate random locally-administered MAC (x2:xx:xx:xx:xx:xx)
         MAC=$(hexdump -n 6 -e '6/1 "%02x:"' /dev/urandom | sed 's/:$//' | sed 's/^\(.\)/\12/')
         ip link set $WLAN down 2>/dev/null
         ip link set $WLAN address "$MAC" 2>/dev/null
@@ -55,40 +309,46 @@ randomize_mac() {
     fi
 }
 
-# Randomize MAC once at daemon start
 randomize_mac
 
 # WiFi keepalive state
 WIFI_FAIL_COUNT=0
 
 check_wifi() {
-    # Only check every 6th iteration (~30 seconds)
     WIFI_FAIL_COUNT=$((WIFI_FAIL_COUNT + 1))
     if [ $((WIFI_FAIL_COUNT % 6)) -ne 0 ]; then
         return
     fi
 
-    # Check internet connectivity
     if ping -c 1 -W 3 8.8.8.8 >/dev/null 2>&1; then
         WIFI_FAIL_COUNT=0
         return
     fi
 
-    # No internet — try wifi reload first
     FAILS=$((WIFI_FAIL_COUNT / 6))
     if [ "$FAILS" -le 3 ]; then
         logger "shadowplug-watchdog: WiFi down, reloading... (attempt $FAILS)"
         wifi reload 2>/dev/null
     elif [ "$FAILS" = 4 ]; then
-        # After 3 fails, try auto-connect via API
         logger "shadowplug-watchdog: WiFi persistent failure, trying auto-connect..."
-        curl -s -X POST http://127.0.0.1:8080/api/wifi/auto-connect >/dev/null 2>&1
+        curl -s -X POST http://127.0.0.1:80/api/wifi/auto-connect >/dev/null 2>&1
     fi
 }
 
-# Run as daemon loop
+check_vpn_route() {
+    # Check if wg_builtin interface is up and has a handshake
+    if wg show wg_builtin 2>/dev/null | grep -q 'latest handshake'; then
+        # Check if the default route goes through wg_builtin
+        if ! ip route show default 2>/dev/null | grep -q 'dev wg_builtin'; then
+            logger "shadowplug-watchdog: VPN active but default route missing. Restoring..."
+            wget -qO- --timeout=5 --post-data='' http://127.0.0.1/api/vpn/restore >/dev/null 2>&1
+        fi
+    fi
+}
+
 while true; do
     check_gadget
     check_wifi
+    check_vpn_route
     sleep 5
 done

@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - shadowplug</title>
+    <link rel="icon" type="image/png" href="favicon.png">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app">
+        <header class="header">
+            <div style="display:flex; align-items:center;">
+                <h1><img src="favicon.png" width="24" height="24" alt="" style="vertical-align:middle;margin-right:6px">shadowplug</h1>
+            </div>
+        </header>
+
+        <div class="card">
+            <div class="card-title">Authentication Required</div>
+            <form id="loginForm">
+                <label>Administrator Password</label>
+                <input type="password" id="password" placeholder="Enter password" required autofocus autocomplete="current-password">
+                <button type="submit" class="btn btn-primary" id="loginBtn" style="width:100%; margin-top:10px;">Login</button>
+            </form>
+            <div id="errorMsg" style="color:var(--red); font-size:12px; margin-top:12px; display:none;">Incorrect password</div>
+        </div>
+    </div>
+    <script>
+        document.getElementById('loginForm').onsubmit = async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('loginBtn');
+            const err = document.getElementById('errorMsg');
+            btn.disabled = true;
+            btn.textContent = 'Verifying...';
+            err.style.display = 'none';
+            try {
+                const r = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({password: document.getElementById('password').value})
+                });
+                if (r.ok) {
+                    window.location.href = '/';
+                } else {
+                    err.textContent = 'Incorrect password';
+                    err.style.display = 'block';
+                    btn.disabled = false;
+                    btn.textContent = 'Login';
+                    document.getElementById('password').value = '';
+                    document.getElementById('password').focus();
+                }
+            } catch (e) {
+                err.textContent = 'Connection error';
+                err.style.display = 'block';
+                btn.disabled = false;
+                btn.textContent = 'Login';
+            }
+        };
+    </script>
+</body>
+</html>

@@ -10,4 +10,4 @@ __pycache__/
 build/
 node_modules/
 typescript
-web/proxy_test_run.sh
+.gemini/

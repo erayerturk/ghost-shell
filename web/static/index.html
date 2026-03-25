@@ -11,7 +11,10 @@
     <div class="app">
         <header class="header">
             <h1><img src="favicon.png" width="24" height="24" alt="" style="vertical-align:middle;margin-right:6px">shadowplug</h1>
-            <span id="vpnBadge" class="badge off">checking</span>
+            <div style="display:flex; align-items:center; gap:12px;">
+                <button class="btn" onclick="logout()" style="padding:4px 10px; font-size:11px; background:transparent; color:var(--text-dim); border:1px solid var(--border);">Logout</button>
+                <span id="vpnBadge" class="badge off">checking</span>
+            </div>
         </header>
 
         <div class="stats">
@@ -307,7 +310,7 @@
                 <div class="stats" style="margin-bottom:0">
                     <div class="stat"><div class="stat-label">Temp</div><div class="stat-val" id="cpuTemp">—</div></div>
                     <div class="stat"><div class="stat-label">Memory</div><div class="stat-val" id="memUsage">—</div></div>
-                    <div class="stat"><div class="stat-label">Load</div><div class="stat-val" id="sysLoad">—</div></div>
+                    <div class="stat"><div class="stat-label">CPU Load</div><div class="stat-val" id="sysLoad">—</div></div>
                     <div class="stat"><div class="stat-label">Uptime</div><div class="stat-val" id="sysUptime">—</div></div>
                 </div>
             </div>

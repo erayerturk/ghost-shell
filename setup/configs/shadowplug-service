@@ -3,9 +3,13 @@ START=99
 
 start() {
     cd /opt/shadowplug/web
-    python3 app.py >> /var/log/shadowplug.log 2>&1 &
+    if [ -f app.so ]; then
+        python3 -B -c "import app; app.app.run(host='0.0.0.0', port=80)" >> /var/log/shadowplug.log 2>&1 &
+    else
+        python3 -B app.py >> /var/log/shadowplug.log 2>&1 &
+    fi
     /usr/bin/usb-watchdog >> /var/log/shadowplug.log 2>&1 &
-    logger "shadowplug: web UI + USB watchdog started"
+    logger "shadowplug: started"
 }
 
 stop() {

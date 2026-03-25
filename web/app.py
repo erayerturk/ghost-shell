@@ -7,12 +7,16 @@ import os
 import re
 import time
 import random
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, session, redirect
+from functools import wraps
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__, static_folder='static', static_url_path='')
+app.secret_key = os.environ.get('SECRET_KEY', 'shadowplug-secret-123')
 
 DATA_DIR = '/opt/shadowplug/data'
 os.makedirs(DATA_DIR, exist_ok=True)
+AUTH_FILE = os.path.join(DATA_DIR, 'auth.json')
 
 # ─── Helpers ────────────────────────────────────────────────
 
@@ -144,8 +148,103 @@ def restore_proxy_on_startup():
         apply_proxy_iptables(config['host'])
         app.logger.info("Proxy restored on startup (legacy format)")
 
+# ─── Public IP Cache (Non-blocking) ─────────────────────────
+
+_PUBLIC_IP_CACHE = "checking..."
+def _update_ip_loop():
+    global _PUBLIC_IP_CACHE
+    time.sleep(10)  # Wait for VPN/proxy to initialize
+    while True:
+        try:
+            new_ip = run("curl -s --max-time 5 http://api.ipify.org 2>/dev/null")
+            if new_ip and len(new_ip) < 20:
+                _PUBLIC_IP_CACHE = new_ip
+        except: pass
+        time.sleep(60)  # Refresh every 60s
+
+import threading
+threading.Thread(target=_update_ip_loop, daemon=True).start()
+
 restore_proxy_on_startup()
 
+
+# ─── Authentication ─────────────────────────────────────────
+
+@app.before_request
+def require_login():
+    path = request.path
+    if path.endswith('.css') or path.endswith('.js') or path.endswith('.png') or path.endswith('.ico'):
+        return
+        
+    # Ignore proxy check endpoint
+    if path == '/api/proxy_check':
+        return
+
+    # Allow local system tools (watchdog curl) bypassing cookies
+    if request.remote_addr == '127.0.0.1':
+        return
+
+    auth_data = read_json(AUTH_FILE, {})
+    is_setup = auth_data.get('setup_complete', False)
+    
+    allowed_setup_routes = ['/setup', '/api/auth/setup', '/api/wifi/scan', '/api/wifi/connect', '/api/wifi', '/api/mac']
+    allowed_login_routes = ['/login', '/api/auth/login']
+    
+    if not is_setup:
+        if path not in allowed_setup_routes:
+            if path.startswith('/api/'):
+                return jsonify({'error': 'Setup required'}), 403
+            return redirect('/setup')
+        return
+        
+    # Setup is complete, enforce login
+    if not session.get('logged_in'):
+        if path not in allowed_login_routes:
+            if path.startswith('/api/'):
+                return jsonify({'error': 'Unauthorized'}), 401
+            return redirect('/login')
+
+@app.route('/login')
+def login_page():
+    return send_from_directory('static', 'login.html')
+
+@app.route('/setup')
+def setup_page():
+    auth_data = read_json(AUTH_FILE, {})
+    if auth_data.get('setup_complete', False):
+        return redirect('/')
+    return send_from_directory('static', 'setup.html')
+
+@app.route('/api/auth/login', methods=['POST'])
+def api_login():
+    data = request.json or {}
+    password = data.get('password', '')
+    auth_data = read_json(AUTH_FILE, {})
+    
+    if check_password_hash(auth_data.get('password_hash', ''), password):
+        session['logged_in'] = True
+        return jsonify({'success': True})
+    return jsonify({'success': False, 'message': 'Invalid password'}), 401
+
+@app.route('/api/auth/logout', methods=['POST'])
+def api_logout():
+    session.pop('logged_in', None)
+    return jsonify({'success': True})
+
+@app.route('/api/auth/setup', methods=['POST'])
+def api_setup():
+    data = request.json or {}
+    password = data.get('password', '')
+    if not password or len(password) < 4:
+        return jsonify({'success': False, 'message': 'Password too short (min 4 chars)'}), 400
+        
+    auth_data = read_json(AUTH_FILE, {})
+    auth_data['password_hash'] = generate_password_hash(password)
+    auth_data['setup_complete'] = True
+    write_json(AUTH_FILE, auth_data)
+    
+    session['logged_in'] = True
+    return jsonify({'success': True})
 
 # ─── Static ─────────────────────────────────────────────────
 
@@ -157,11 +256,14 @@ def index():
 
 @app.route('/api/status')
 def status():
-    # Get direct public IP
-    direct_ip = run("curl -s --max-time 5 http://api.ipify.org 2>/dev/null") or \
-                run("wget -qO- http://api.ipify.org 2>/dev/null") or 'unknown'
+    # Use cached public IP (never blocks)
+    public_ip = _PUBLIC_IP_CACHE
     wg_output = run("wg show 2>/dev/null")
-    vpn_connected = 'latest handshake' in wg_output
+    wg0_output = run("wg show wg0 2>/dev/null")
+    wg1_output = run("wg show wg_builtin 2>/dev/null") or run("wg show wg1 2>/dev/null")
+    custom_vpn_connected = 'latest handshake' in wg0_output
+    builtin_vpn_connected = 'latest handshake' in wg1_output
+    vpn_connected = custom_vpn_connected or builtin_vpn_connected
     proxy_running = bool(run("ps | grep proxy_server.py | grep -v grep"))
     proxy_config = read_json(PROXY_FILE, {})
     proxy_enabled = proxy_config.get('enabled', False) and proxy_running
@@ -169,14 +271,16 @@ def status():
     # Determine active mode and displayed IP
     if proxy_enabled:
         mode = 'proxy'
+        # Proxy IP check is still blocking for now but used only when proxy is ON.
+        # We will optimize this if needed.
         proxy_ip = get_proxy_ip()
-        public_ip = proxy_ip if proxy_ip else direct_ip
+        public_ip = proxy_ip if proxy_ip else _PUBLIC_IP_CACHE
     elif vpn_connected:
         mode = 'vpn'
-        public_ip = direct_ip
+        public_ip = _PUBLIC_IP_CACHE
     else:
         mode = 'direct'
-        public_ip = direct_ip
+        public_ip = _PUBLIC_IP_CACHE
 
     tx, rx = '0 B', '0 B' # Initialize tx, rx for all cases
 
@@ -216,6 +320,8 @@ def status():
     return jsonify({
         'public_ip': public_ip,
         'vpn_connected': vpn_connected,
+        'custom_vpn_connected': custom_vpn_connected,
+        'builtin_vpn_connected': builtin_vpn_connected,
         'proxy_running': proxy_running,
         'mode': mode,
         'vpn_tx': tx,
@@ -649,7 +755,10 @@ def wifi_get():
                     quality = int(lq.split('/')[0]) * 100 // int(lq.split('/')[1])
                     signal = str(-100 + quality) + ' dBm'
             ip_addr = run(f"ip addr show {wifi_iface} 2>/dev/null | grep 'inet ' | awk '{{print $2}}'") or ''
-    internet = run("ping -c 1 -W 2 8.8.8.8 >/dev/null 2>&1 && echo ok") == 'ok'
+    internet_check = run("ping -c 1 -W 2 1.1.1.1 >/dev/null 2>&1 && echo ok")
+    if internet_check != 'ok':
+        internet_check = run("curl -I -s -m 2 http://1.1.1.1 >/dev/null 2>&1 && echo ok")
+    internet = (internet_check == 'ok')
     profiles = load_wifi_profiles()
     return jsonify({
         'ssid': ssid,
@@ -1125,7 +1234,7 @@ def system_info():
         'mem_total': run("grep MemTotal /proc/meminfo | awk '{print $2}'"),
         'mem_free': run("grep MemAvailable /proc/meminfo | awk '{print $2}'"),
         'disk_usage': run("df -h / | tail -1 | awk '{print $5}'"),
-        'load': run("cat /proc/loadavg | awk '{print $1, $2, $3}'"),
+        'cpu_usage': run("top -bn1 | head -2 | tail -1 | awk '{print 100 - $8}'"),
     })
 
 # ─── Logs ────────────────────────────────────────────────────

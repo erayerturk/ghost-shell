@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Setup - shadowplug</title>
+    <link rel="icon" type="image/png" href="favicon.png">
+    <link rel="stylesheet" href="style.css">
+    <style>
+        .step { display: none; }
+        .step.active { display: block; }
+        
+        #wifiList { margin-bottom: 16px; max-height: 180px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+        .wifi-item { padding: 10px 14px; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-size: 13px; transition: background 0.15s; }
+        .wifi-item:hover { background: var(--surface); }
+        .wifi-item.selected { background: rgba(74, 158, 255, 0.1); border-left: 2px solid var(--accent); color: var(--accent); }
+        .wifi-item:last-child { border-bottom: none; }
+        
+        .error-ms { color: var(--red); font-size: 12px; margin-top: 4px; display: none; }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <header class="header">
+            <div style="display:flex; align-items:center;">
+                <h1><img src="favicon.png" width="24" height="24" alt="" style="vertical-align:middle;margin-right:6px">shadowplug setup</h1>
+            </div>
+        </header>
+
+        <!-- Step 1: Password -->
+        <div id="step1" class="card step active">
+            <div class="card-title">1. Administrator Password</div>
+            <label>Set a strong password to protect your device settings.</label>
+            <input type="password" id="pw1" placeholder="New Password (min 4 chars)" autofocus autocomplete="new-password">
+            <input type="password" id="pw2" placeholder="Confirm Password" autocomplete="new-password">
+            <div id="pwErr" class="error-ms"></div>
+            <button class="btn btn-primary" style="width:100%; margin-top:10px;" onclick="goToStep2()">Next: Connect Wi-Fi</button>
+        </div>
+
+        <!-- Step 2: Wi-Fi -->
+        <div id="step2" class="card step">
+            <div class="card-title">2. Connect to Wi-Fi</div>
+            <label style="margin-bottom:12px; display:inline-block;">Connect to your local network for internet access and OTA updates.</label>
+            
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                <label style="margin:0;">Networks</label>
+                <button class="btn" onclick="scanWifi()">Rescan</button>
+            </div>
+            
+            <div id="wifiList">
+                <div style="padding:20px; text-align:center; color:var(--text-dim); font-size:12px;">Scanning...</div>
+            </div>
+
+            <div id="wifiInputs" style="display:none;">
+                <label>Selected Network</label>
+                <input type="text" id="wifiSsid" readonly style="background:var(--bg); color:var(--accent);">
+                <label>Wi-Fi Password</label>
+                <input type="password" id="wifiPass" placeholder="Enter network password">
+                <div id="wifiMsg" class="error-ms" style="color:var(--text-dim); display:block; margin-bottom:12px;"></div>
+            </div>
+
+            <div style="display:flex; gap:10px; margin-top:12px;">
+                <button class="btn" style="flex:1;" onclick="skipSetup()">Skip</button>
+                <button class="btn btn-primary" id="connectBtn" style="flex:2;" disabled onclick="connectWifi()">Connect & Finish</button>
+            </div>
+        </div>
+
+        <!-- Step 3: Finish -->
+        <div id="step3" class="card step" style="text-align: center; padding: 40px 20px;">
+            <div class="card-title" id="finishTitle" style="color:var(--green); margin-bottom:12px;">Saving Configuration...</div>
+            <label id="finishSub" style="margin-bottom:0; text-transform:none; font-size:13px;">Securing device and starting dashboard services.</label>
+        </div>
+    </div>
+
+    <script>
+        let adminPwd = "";
+
+        document.getElementById('pw1').addEventListener('keypress', e => { if(e.key === 'Enter') document.getElementById('pw2').focus(); });
+        document.getElementById('pw2').addEventListener('keypress', e => { if(e.key === 'Enter') goToStep2(); });
+        document.getElementById('wifiPass').addEventListener('keypress', e => { if(e.key === 'Enter') connectWifi(); });
+
+        function goToStep2() {
+            const p1 = document.getElementById('pw1').value, p2 = document.getElementById('pw2').value;
+            const err = document.getElementById('pwErr');
+            if(p1.length < 4) { err.textContent = "Password must be at least 4 characters"; err.style.display = "block"; return; }
+            if(p1 !== p2) { err.textContent = "Passwords do not match"; err.style.display = "block"; return; }
+            
+            adminPwd = p1;
+            document.getElementById('step1').classList.remove('active');
+            document.getElementById('step2').classList.add('active');
+            scanWifi();
+        }
+
+        async function scanWifi() {
+            const list = document.getElementById('wifiList');
+            const inputs = document.getElementById('wifiInputs');
+            const btn = document.getElementById('connectBtn');
+            const msg = document.getElementById('wifiMsg');
+            
+            list.innerHTML = '<div style="padding:20px; text-align:center; color:var(--text-dim); font-size:12px;">Scanning networks...</div>';
+            inputs.style.display = 'none';
+            btn.disabled = true;
+
+            try {
+                const r = await fetch('/api/wifi/scan', { method: 'POST' });
+                const d = await r.json();
+                
+                if (d.networks && d.networks.length > 0) {
+                    list.innerHTML = '';
+                    d.networks.forEach(n => {
+                        const div = document.createElement('div');
+                        div.className = 'wifi-item';
+                        let color = n.signal > 65 ? 'var(--green)' : (n.signal > 35 ? '#ff9800' : 'var(--red)');
+                        div.innerHTML = `<span>${n.ssid}</span> <span style="color:${color}; font-weight:600; font-size:11px;">${n.signal}%</span>`;
+                        
+                        div.onclick = () => {
+                            document.querySelectorAll('.wifi-item').forEach(el => el.classList.remove('selected'));
+                            div.classList.add('selected');
+                            document.getElementById('wifiSsid').value = n.ssid;
+                            inputs.style.display = 'block';
+                            document.getElementById('wifiPass').focus();
+                            msg.textContent = "Enter password for network";
+                            msg.style.color = "var(--text-dim)";
+                            btn.disabled = false;
+                        };
+                        list.appendChild(div);
+                    });
+                } else {
+                    list.innerHTML = '<div style="padding:20px; text-align:center; color:var(--text-dim); font-size:12px;">No networks found</div>';
+                }
+            } catch (e) {
+                list.innerHTML = '<div style="padding:20px; text-align:center; color:var(--red); font-size:12px;">Failed to scan Wi-Fi interface</div>';
+            }
+        }
+
+        async function connectWifi() {
+            const ssid = document.getElementById('wifiSsid').value;
+            const pwd = document.getElementById('wifiPass').value;
+            const msg = document.getElementById('wifiMsg');
+            const btn = document.getElementById('connectBtn');
+            
+            if(!ssid) return;
+
+            btn.disabled = true;
+            btn.textContent = "Testing...";
+            msg.style.color = "var(--text)";
+            msg.textContent = `Connecting to ${ssid} (approx 15s)...`;
+
+            try {
+                const r = await fetch('/api/wifi/connect', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ssid: ssid, password: pwd})
+                });
+                const d = await r.json();
+                
+                if(d.success) {
+                    finalizeSetup();
+                } else {
+                    msg.innerHTML = "<b>Failed:</b> " + (d.message || "Invalid password");
+                    msg.style.color = "var(--red)";
+                    btn.disabled = false;
+                    btn.textContent = "Connect & Finish";
+                }
+            } catch(e) {
+                msg.textContent = "Error communicating with device.";
+                msg.style.color = "var(--red)";
+                btn.disabled = false;
+                btn.textContent = "Connect & Finish";
+            }
+        }
+
+        function skipSetup() { finalizeSetup(); }
+
+        async function finalizeSetup() {
+            document.getElementById('step2').classList.remove('active');
+            document.getElementById('step3').classList.add('active');
+
+            try {
+                const r = await fetch('/api/auth/setup', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({password: adminPwd})
+                });
+                
+                if(r.ok) {
+                    document.getElementById('finishTitle').textContent = "Setup Complete";
+                    document.getElementById('finishTitle').style.color = "var(--green)";
+                    document.getElementById('finishSub').textContent = "Redirecting to dashboard...";
+                    setTimeout(() => window.location.href = '/', 1000);
+                } else {
+                    showError("Failed to save credentials.");
+                }
+            } catch (e) {
+                showError("Connection lost. It may have restarted.");
+                setTimeout(() => window.location.href = '/', 3000);
+            }
+        }
+
+        function showError(msg) {
+            document.getElementById('finishTitle').textContent = "Error Occurred";
+            document.getElementById('finishTitle').style.color = "var(--red)";
+            document.getElementById('finishSub').textContent = msg;
+        }
+    </script>
+</body>
+</html>
